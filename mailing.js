@@ -1,11 +1,12 @@
 const { TelegramClient, Api } = require("telegram");
 const { StringSession } = require("telegram/sessions");
+const TelegramBot = require("node-telegram-bot-api");
 
 const sleep = (milliseconds) => {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 };
 
-// Конфигурация
+// Конфигурация Telegram Client
 const API_ID = 25171031;
 const API_HASH = "10f7696a65a7217fad43302ea6ba1695";
 const session = new StringSession(
@@ -15,10 +16,28 @@ const client = new TelegramClient(session, API_ID, API_HASH, {
   connectionRetries: 5,
 });
 
+// Конфигурация Telegram Bot
+const BOT_TOKEN = "8033041005:AAHLY32ezWnDo8oEXCE0KP0nIniuTn_hfL8"; // Замените на ваш токен бота
+const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+
 // Настройки рассылки
-const batchSize = 6; // Размер пачки для рассылки
-const waitTime = 900; // Ожидание между пачками в секундах
-const sourceChatUsername = "@premiumspamer"; // Чат, откуда брать последнее сообщение
+const batchSize = 6;
+const waitTime = 900;
+const sourceChatUsername = "@premiumspamer";
+
+// Состояние рассылки
+let isSending = false;
+let stopSending = false;
+let adminChatId = null;
+
+// Создаем клавиатуру с кнопками
+const menuKeyboard = {
+  reply_markup: {
+    keyboard: [["🚀 Старт рассылки"], ["🛑 Остановить рассылку"]],
+    resize_keyboard: true,
+    one_time_keyboard: false,
+  },
+};
 
 async function getAllFolders() {
   try {
@@ -45,12 +64,23 @@ async function getLastMessageFromChat(username) {
 
 async function forwardMessageToChats() {
   try {
+    if (!adminChatId) {
+      console.log("Admin chat ID not set");
+      return;
+    }
+
     await client.connect();
 
     // Получаем чаты для рассылки
     const chats = await getAllFolders();
     if (!chats || chats.length === 0) {
       console.log("Нет чатов для рассылки");
+      await bot.sendMessage(
+        adminChatId,
+        "Нет чатов для рассылки",
+        menuKeyboard
+      );
+      isSending = false;
       return;
     }
 
@@ -60,14 +90,36 @@ async function forwardMessageToChats() {
 
     if (!lastMessage) {
       console.log("Не удалось получить последнее сообщение из исходного чата");
+      await bot.sendMessage(
+        adminChatId,
+        "Не удалось получить последнее сообщение из исходного чата",
+        menuKeyboard
+      );
+      isSending = false;
       return;
     }
 
     console.log(`Начинаем рассылку сообщения из ${sourceChatUsername}...`);
+    await bot.sendMessage(
+      adminChatId,
+      `Начинаем рассылку сообщения из ${sourceChatUsername}...`,
+      menuKeyboard
+    );
 
     let successCount = 0;
+    stopSending = false;
 
     for (let i = 0; i < chats.length; i += batchSize) {
+      if (stopSending) {
+        console.log("Рассылка остановлена администратором");
+        await bot.sendMessage(
+          adminChatId,
+          "Рассылка остановлена администратором",
+          menuKeyboard
+        );
+        break;
+      }
+
       const batch = chats.slice(i, i + batchSize);
       const promises = [];
 
@@ -87,12 +139,6 @@ async function forwardMessageToChats() {
                 }`
               );
               successCount++;
-              if (successCount % batchSize === 0) {
-                console.log(
-                  `Достигнуто ${successCount} успешных отправок. Ждем ${waitTime} секунд...`
-                );
-                await sleep(waitTime * 1000);
-              }
             } catch (error) {
               console.error(`Ошибка при пересылке в ${chat}:`, error);
             }
@@ -101,14 +147,83 @@ async function forwardMessageToChats() {
       }
 
       await Promise.all(promises);
+
+      if (i + batchSize < chats.length && !stopSending) {
+        console.log(
+          `Отправлено ${i + batchSize} из ${
+            chats.length
+          }. Ждем ${waitTime} секунд...`
+        );
+        await bot.sendMessage(
+          adminChatId,
+          `Отправлено ${i + batchSize} из ${
+            chats.length
+          }. Ждем ${waitTime} секунд...`,
+          menuKeyboard
+        );
+        await sleep(waitTime * 1000);
+      }
     }
 
-    console.log("Рассылка завершена!");
+    if (!stopSending) {
+      console.log("Рассылка завершена!");
+      await bot.sendMessage(
+        adminChatId,
+        `Рассылка завершена! Успешно отправлено: ${successCount} сообщений`,
+        menuKeyboard
+      );
+    }
+    isSending = false;
   } catch (error) {
     console.error("Ошибка в основном потоке:", error);
+    if (adminChatId) {
+      await bot.sendMessage(
+        adminChatId,
+        `Произошла ошибка: ${error.message}`,
+        menuKeyboard
+      );
+    }
+    isSending = false;
   } finally {
     await client.disconnect();
   }
 }
 
-forwardMessageToChats().catch(console.error);
+// Обработчики команд бота
+bot.onText(/\/start/, (msg) => {
+  adminChatId = msg.chat.id;
+  bot.sendMessage(
+    adminChatId,
+    "Бот для рассылки сообщений. Используйте кнопки для управления:",
+    menuKeyboard
+  );
+});
+
+bot.on("message", (msg) => {
+  const text = msg.text;
+  const chatId = msg.chat.id;
+  adminChatId = chatId;
+
+  if (text === "🚀 Старт рассылки") {
+    if (isSending) {
+      bot.sendMessage(chatId, "Рассылка уже запущена", menuKeyboard);
+    } else {
+      isSending = true;
+      bot.sendMessage(chatId, "Запускаем рассылку...", menuKeyboard);
+      forwardMessageToChats();
+    }
+  } else if (text === "🛑 Остановить рассылку") {
+    if (isSending) {
+      stopSending = true;
+      bot.sendMessage(
+        chatId,
+        "Команда на остановку рассылки принята",
+        menuKeyboard
+      );
+    } else {
+      bot.sendMessage(chatId, "Рассылка не активна", menuKeyboard);
+    }
+  }
+});
+
+console.log("Бот запущен и ожидает команд...");
