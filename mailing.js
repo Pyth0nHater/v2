@@ -24,16 +24,22 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 const batchSize = 6;
 const waitTime = 900;
 const sourceChatUsername = "@premiumspamer";
+const restartDelay = 5000; // Задержка перед перезапуском в миллисекундах (5 секунд)
 
 // Состояние рассылки
 let isSending = false;
 let stopSending = false;
 let adminChatId = null;
+let autoRestartEnabled = false; // Флаг автоматического перезапуска
 
 // Создаем клавиатуру с кнопками
 const menuKeyboard = {
   reply_markup: {
-    keyboard: [["🚀 Старт рассылки"], ["🛑 Остановить рассылку"]],
+    keyboard: [
+      ["🚀 Старт рассылки"],
+      ["🛑 Остановить рассылку"],
+      ["🔄 Автоперезапуск ВКЛ", "⏹ Автоперезапуск ВЫКЛ"],
+    ],
     resize_keyboard: true,
     one_time_keyboard: false,
   },
@@ -172,6 +178,18 @@ async function forwardMessageToChats() {
         `Рассылка завершена! Успешно отправлено: ${successCount} сообщений`,
         menuKeyboard
       );
+
+      // Если включен автоперезапуск, запускаем снова после задержки
+      if (autoRestartEnabled && !stopSending) {
+        console.log(`Автоперезапуск через ${restartDelay / 1000} секунд...`);
+        await bot.sendMessage(
+          adminChatId,
+          `Автоперезапуск через ${restartDelay / 1000} секунд...`,
+          menuKeyboard
+        );
+        await sleep(restartDelay);
+        forwardMessageToChats();
+      }
     }
     isSending = false;
   } catch (error) {
@@ -209,6 +227,7 @@ bot.on("message", (msg) => {
       bot.sendMessage(chatId, "Рассылка уже запущена", menuKeyboard);
     } else {
       isSending = true;
+      stopSending = false;
       bot.sendMessage(chatId, "Запускаем рассылку...", menuKeyboard);
       forwardMessageToChats();
     }
@@ -223,6 +242,22 @@ bot.on("message", (msg) => {
     } else {
       bot.sendMessage(chatId, "Рассылка не активна", menuKeyboard);
     }
+  } else if (text === "🔄 Автоперезапуск ВКЛ") {
+    autoRestartEnabled = true;
+    bot.sendMessage(chatId, "Автоперезапуск включен", menuKeyboard);
+    if (!isSending) {
+      isSending = true;
+      stopSending = false;
+      bot.sendMessage(
+        chatId,
+        "Запускаем рассылку с автоперезапуском...",
+        menuKeyboard
+      );
+      forwardMessageToChats();
+    }
+  } else if (text === "⏹ Автоперезапуск ВЫКЛ") {
+    autoRestartEnabled = false;
+    bot.sendMessage(chatId, "Автоперезапуск выключен", menuKeyboard);
   }
 });
 
