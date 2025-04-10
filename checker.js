@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 
 const MESSAGE_HISTORY_FILE = path.join(__dirname, "messageHistory.json");
-const MAX_HISTORY_SIZE = 50; // Увеличил размер истории для надежности
+const MAX_HISTORY_SIZE = 20;
 
 // Загружаем историю сообщений или создаем новую
 let messageHistory = [];
@@ -12,6 +12,10 @@ try {
   if (fs.existsSync(MESSAGE_HISTORY_FILE)) {
     const data = fs.readFileSync(MESSAGE_HISTORY_FILE, "utf-8");
     messageHistory = JSON.parse(data);
+    // Проверяем, что это массив строк
+    if (!Array.isArray(messageHistory)) {
+      messageHistory = [];
+    }
   }
 } catch (err) {
   console.error("Ошибка при загрузке истории сообщений:", err);
@@ -35,7 +39,7 @@ const SOURCE_CHANNELS = [
 ];
 const TARGET_CHANNEL = "@arbitrage_vacancys";
 
-// Функция для нормализации текста (удаление лишних пробелов, приведение к нижнему регистру)
+// Функция для нормализации текста
 function normalizeText(text) {
   return text
     .replace(/\s+/g, " ") // Заменяем множественные пробелы на один
@@ -43,40 +47,26 @@ function normalizeText(text) {
     .toLowerCase(); // Приводим к нижнему регистру
 }
 
-function getMessageKey(message) {
-  // Получаем текст сообщения
-  let text = message.text || "";
-
-  // Если сообщение содержит медиа, но нет текста, создаем ключ на основе медиа
-  if (!text && message.media) {
-    return `media:${message.media.classType}-${
-      message.media.id?.toString() || "0"
-    }`;
-  }
-
-  // Нормализуем текст для сравнения
+function saveMessageToHistory(text) {
+  // Нормализуем текст перед сохранением
   const normalizedText = normalizeText(text);
 
-  // Создаем хеш текста для компактного хранения
-  // Используем простую хеш-функцию для демонстрации (можно заменить на более надежную)
-  let hash = 0;
-  for (let i = 0; i < normalizedText.length; i++) {
-    const char = normalizedText.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash |= 0; // Преобразуем в 32-битное целое число
+  // Добавляем текст в начало массива
+  messageHistory.unshift(normalizedText);
+
+  // Удаляем дубликаты (новые записи остаются, старые удаляются)
+  const uniqueHistory = [];
+  const seen = new Set();
+
+  for (const item of messageHistory) {
+    if (!seen.has(item)) {
+      seen.add(item);
+      uniqueHistory.push(item);
+    }
   }
-
-  return `text:${hash}`;
-}
-
-function saveMessageToHistory(messageKey) {
-  // Добавляем новое сообщение в начало массива
-  messageHistory.unshift(messageKey);
 
   // Обрезаем массив до максимального размера
-  if (messageHistory.length > MAX_HISTORY_SIZE) {
-    messageHistory = messageHistory.slice(0, MAX_HISTORY_SIZE);
-  }
+  messageHistory = uniqueHistory.slice(0, MAX_HISTORY_SIZE);
 
   // Сохраняем в файл
   try {
@@ -87,6 +77,11 @@ function saveMessageToHistory(messageKey) {
   } catch (err) {
     console.error("Ошибка при сохранении истории сообщений:", err);
   }
+}
+
+function isMessageDuplicate(text) {
+  const normalizedText = normalizeText(text);
+  return messageHistory.includes(normalizedText);
 }
 
 (async () => {
@@ -109,11 +104,17 @@ function saveMessageToHistory(messageKey) {
 
       console.log(`📩 Новое сообщение из канала @${sourceUsername}`);
 
-      // Получаем уникальный ключ сообщения
-      const messageKey = getMessageKey(message);
+      // Получаем текст сообщения
+      const messageText = message.message || "";
+
+      // Пропускаем сообщения без текста (только медиа)
+      if (!messageText.trim()) {
+        console.log("⏭ Сообщение без текста, пропускаем");
+        return;
+      }
 
       // Проверяем, есть ли такое сообщение в истории
-      if (messageHistory.includes(messageKey)) {
+      if (isMessageDuplicate(messageText)) {
         console.log("⏭ Сообщение уже публиковалось, пропускаем");
         return;
       }
@@ -125,8 +126,8 @@ function saveMessageToHistory(messageKey) {
         dropAuthor: true, // Скрываем автора
       });
 
-      // Сохраняем сообщение в историю
-      saveMessageToHistory(messageKey);
+      // Сохраняем текст сообщения в историю
+      saveMessageToHistory(messageText);
 
       console.log("✅ Сообщение переслано (автор скрыт)!");
     } catch (err) {
