@@ -57,6 +57,57 @@ async function getAllFolders() {
   }
 }
 
+// Добавьте эту новую функцию для получения информации о чатах
+async function printChatsInfo() {
+  try {
+    await client.connect();
+    const chats = await getAllFolders();
+
+    if (!chats || chats.length === 0) {
+      console.log("Нет чатов для отображения");
+      return;
+    }
+
+    console.log("Список чатов:");
+    for (let i = 0; i < chats.length; i++) {
+      try {
+        const targetEntity = await client.getInputEntity(chats[i]);
+        // console.log(`Чат ${i + 1}:`, targetEntity);
+
+        // Если хотите получить больше информации о чате
+        const fullEntity = await client.getEntity(chats[i]);
+        // console.log(`Подробности чата ${i + 1}:`, fullEntity);
+
+        // Извлекаем название чата в зависимости от типа
+        let chatName = "";
+        if (fullEntity.className === "Channel") {
+          chatName = fullEntity.title;
+        } else if (fullEntity.className === "User") {
+          chatName = `${fullEntity.firstName || ""} ${
+            fullEntity.lastName || ""
+          }`.trim();
+        } else if (fullEntity.className === "Chat") {
+          chatName = fullEntity.title;
+        }
+
+        console.log(`Название чата ${i + 1}:`, chatName);
+      } catch (error) {
+        console.error(
+          `Ошибка при получении информации о чате ${i + 1}:`,
+          error
+        );
+      }
+    }
+  } catch (error) {
+    console.error("Ошибка при подключении:", error);
+  } finally {
+    await client.disconnect();
+  }
+}
+
+// Вызываем функцию для вывода информации о чатах
+// printChatsInfo();
+
 async function getLastMessageFromChat(username) {
   try {
     const entity = await client.getEntity(username);
